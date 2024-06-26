@@ -13,6 +13,9 @@ rust-version = "1.75"
 [lib]
 proc-macro = true
 
+[lints]
+workspace = true
+
 [dependencies]
 devise = "0.4"
 quote = "1"

@@ -191,20 +191,19 @@ impl Collide for MediaType {
 }
 
 fn formats_collide(route: &Route, other: &Route) -> bool {
-    // If the routes' method doesn't support a payload, then format matching
-    // considers the `Accept` header. The client can always provide a media type
-    // that will cause a collision through non-specificity, i.e, `*/*`.
-    if !route.method.supports_payload() && !other.method.supports_payload() {
-        return true;
-    }
-
-    // Payload supporting methods match against `Content-Type`. We only
-    // consider requests as having a `Content-Type` if they're fully
-    // specified. A route without a `format` accepts all `Content-Type`s. A
-    // request without a format only matches routes without a format.
-    match (route.format.as_ref(), other.format.as_ref()) {
-        (Some(a), Some(b)) => a.collides_with(b),
-        _ => true
+    match (route.method.allows_request_body(), other.method.allows_request_body()) {
+        // Payload supporting methods match against `Content-Type` which must be
+        // fully specified, so the request cannot contain a format that matches
+        // more than one route format as long as those formats don't collide.
+        (Some(true), Some(true)) => match (route.format.as_ref(), other.format.as_ref()) {
+            (Some(a), Some(b)) => a.collides_with(b),
+            // A route without a `format` accepts all `Content-Type`s.
+            _ => true
+        },
+        // When a request method may not support a payload, the `Accept` header
+        // is considered during matching. The header can always be `*/*`, which
+        // would match any format. Thus two such routes would always collide.
+        _ => true,
     }
 }
 
@@ -227,7 +226,7 @@ mod tests {
             let (a, b) = (dummy_route($ranked, $m1, $p1), dummy_route($ranked, $m2, $p2));
             assert! {
                 a.collides_with(&b),
-                "\nroutes failed to collide:\n{} does not collide with {}\n", a, b
+                "\nroutes failed to collide:\n{:?} does not collide with {:?}\n", a, b
             }
         };
         (ranked $($t:tt)+) => (assert_collision!(true, $($t)+));
@@ -240,7 +239,7 @@ mod tests {
             let (a, b) = (dummy_route($ranked, $m1, $p1), dummy_route($ranked, $m2, $p2));
             assert! {
                 !a.collides_with(&b),
-                "\nunexpected collision:\n{} collides with {}\n", a, b
+                "\nunexpected collision:\n{:?} collides with {:?}\n", a, b
             }
         };
         (ranked $($t:tt)+) => (assert_no_collision!(true, $($t)+));

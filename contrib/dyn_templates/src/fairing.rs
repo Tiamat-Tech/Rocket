@@ -1,5 +1,7 @@
 use rocket::{Rocket, Build, Orbit};
 use rocket::fairing::{self, Fairing, Info, Kind};
+use rocket::figment::{Source, value::magic::RelativePathBuf};
+use rocket::trace::Trace;
 
 use crate::context::{Callback, Context, ContextManager};
 use crate::template::DEFAULT_TEMPLATE_DIR;
@@ -31,8 +33,6 @@ impl Fairing for TemplateFairing {
     /// template engines. In debug mode, the `ContextManager::new` method
     /// initializes a directory watcher for auto-reloading of templates.
     async fn on_ignite(&self, rocket: Rocket<Build>) -> fairing::Result {
-        use rocket::figment::value::magic::RelativePathBuf;
-
         let configured_dir = rocket.figment()
             .extract_inner::<RelativePathBuf>("template_dir")
             .map(|path| path.relative());
@@ -41,7 +41,7 @@ impl Fairing for TemplateFairing {
             Ok(dir) => dir,
             Err(e) if e.missing() => DEFAULT_TEMPLATE_DIR.into(),
             Err(e) => {
-                rocket::config::pretty_print_error(e);
+                e.trace_error();
                 return Err(rocket);
             }
         };
@@ -49,20 +49,19 @@ impl Fairing for TemplateFairing {
         if let Some(ctxt) = Context::initialize(&path, &self.callback) {
             Ok(rocket.manage(ContextManager::new(ctxt)))
         } else {
-            error_!("Template initialization failed. Aborting launch.");
+            error!("Template initialization failed. Aborting launch.");
             Err(rocket)
         }
     }
 
     async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
-        use rocket::{figment::Source, log::PaintExt, yansi::Paint};
-
         let cm = rocket.state::<ContextManager>()
             .expect("Template ContextManager registered in on_ignite");
 
-        info!("{}{}:", "📐 ".emoji(), "Templating".magenta());
-        info_!("directory: {}", Source::from(&*cm.context().root).primary());
-        info_!("engines: {:?}", Engines::ENABLED_EXTENSIONS.primary());
+        span_info!("templating" => {
+            info!(directory = %Source::from(&*cm.context().root));
+            info!(engines = ?Engines::ENABLED_EXTENSIONS);
+        });
     }
 
     #[cfg(debug_assertions)]
@@ -72,5 +71,4 @@ impl Fairing for TemplateFairing {
 
         cm.reload_if_needed(&self.callback);
     }
-
 }

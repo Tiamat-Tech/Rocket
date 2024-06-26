@@ -15,7 +15,7 @@ fn swap(r#raw: String, bare: String) -> String {
 }
 
 #[catch(400)]
-fn catch(r#raw: &rocket::Request) -> String {
+fn catch(r#raw: &rocket::Request<'_>) -> String {
     format!("{}", raw.method())
 }
 

@@ -1,5 +1,3 @@
-use std::fmt;
-
 use serde::{Serialize, Deserialize};
 use crate::request::{Request, FromRequest, Outcome};
 
@@ -126,7 +124,7 @@ use crate::http::uncased::Uncased;
 pub struct Limits {
     #[serde(deserialize_with = "Limits::deserialize")]
     #[serde(serialize_with = "figment::util::vec_tuple_map::serialize")]
-    limits: Vec<(Uncased<'static>, ByteUnit)>,
+    pub(crate) limits: Vec<(Uncased<'static>, ByteUnit)>,
 }
 
 impl Default for Limits {
@@ -311,17 +309,6 @@ impl Limits {
         let mut limits = figment::util::vec_tuple_map::deserialize(de)?;
         limits.sort();
         Ok(limits)
-    }
-}
-
-impl fmt::Display for Limits {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, (k, v)) in self.limits.iter().enumerate() {
-            if i != 0 { f.write_str(", ")? }
-            write!(f, "{} = {}", k, v)?;
-        }
-
-        Ok(())
     }
 }
 

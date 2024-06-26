@@ -12,11 +12,7 @@ pub(crate) struct Router {
     catchers: HashMap<Option<u16>, Vec<Catcher>>,
 }
 
-#[derive(Debug)]
-pub struct Collisions {
-    pub routes: Vec<(Route, Route)>,
-    pub catchers: Vec<(Catcher, Catcher)>,
-}
+pub type Collisions<T> = Vec<(T, T)>;
 
 impl Router {
     pub fn new() -> Self {
@@ -84,12 +80,12 @@ impl Router {
             })
     }
 
-    pub fn finalize(&self) -> Result<(), Collisions> {
+    pub fn finalize(&self) -> Result<(), (Collisions<Route>, Collisions<Catcher>)> {
         let routes: Vec<_> = self.collisions(self.routes()).collect();
         let catchers: Vec<_> = self.collisions(self.catchers()).collect();
 
         if !routes.is_empty() || !catchers.is_empty() {
-            return Err(Collisions { routes, catchers })
+            return Err((routes, catchers))
         }
 
         Ok(())
@@ -580,10 +576,10 @@ mod test {
                 let req_status = Status::from_code(req.0).expect("valid status");
                 let catcher = catcher(&router, req_status, req.1).expect("some catcher");
                 assert_eq!(catcher.code, expected.0,
-                    "\nmatched {}, expected {:?} for req {:?}", catcher, expected, req);
+                    "\nmatched {:?}, expected {:?} for req {:?}", catcher, expected, req);
 
                 assert_eq!(catcher.base.path(), expected.1,
-                    "\nmatched {}, expected {:?} for req {:?}", catcher, expected, req);
+                    "\nmatched {:?}, expected {:?} for req {:?}", catcher, expected, req);
             }
         })
     }

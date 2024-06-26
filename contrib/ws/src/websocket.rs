@@ -278,6 +278,7 @@ impl<'r, S> IoHandler for MessageStream<'r, S>
         rocket::tokio::pin!(stream);
         while let Some(msg) = stream.next().await {
             let result = match msg {
+                Ok(msg) if msg.is_close() => return Ok(()),
                 Ok(msg) => sink.send(msg).await,
                 Err(e) => Err(e)
             };

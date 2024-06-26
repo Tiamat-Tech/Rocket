@@ -1,7 +1,6 @@
-use std::{fmt, time::Duration};
-
 #[cfg(unix)]
 use std::collections::HashSet;
+use std::time::Duration;
 
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -206,24 +205,6 @@ pub struct ShutdownConfig {
     #[doc(hidden)]
     #[serde(skip)]
     pub __non_exhaustive: (),
-}
-
-impl fmt::Display for ShutdownConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ctrlc = {}, force = {}, ", self.ctrlc, self.force)?;
-
-        #[cfg(unix)] {
-            write!(f, "signals = [")?;
-            for (i, sig) in self.signals.iter().enumerate() {
-                if i != 0 { write!(f, ", ")?; }
-                write!(f, "{}", sig)?;
-            }
-            write!(f, "], ")?;
-        }
-
-        write!(f, "grace = {}s, mercy = {}s", self.grace, self.mercy)?;
-        Ok(())
-    }
 }
 
 impl Default for ShutdownConfig {

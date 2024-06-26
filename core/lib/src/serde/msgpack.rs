@@ -190,7 +190,7 @@ impl<'r, T: Serialize> Responder<'r, 'static> for MsgPack<T> {
     fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
         let buf = rmp_serde::to_vec(&self.0)
             .map_err(|e| {
-                error_!("MsgPack failed to serialize: {:?}", e);
+                error!("MsgPack serialize failure: {}", e);
                 Status::InternalServerError
             })?;
 

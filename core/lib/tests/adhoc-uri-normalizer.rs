@@ -38,10 +38,7 @@ fn test_adhoc_normalizer_works_as_expected () {
         .mount("/base", routes![foo, bar, not_bar, baz, doggy, rest])
         .attach(AdHoc::uri_normalizer());
 
-    let client = match Client::debug(rocket) {
-        Ok(client) => client,
-        Err(e) => { e.pretty_print(); panic!("failed to build client"); }
-    };
+    let client = Client::debug(rocket).unwrap();
 
     assert_response!(client: "/foo" => "foo");
     assert_response!(client: "/foo/" => "foo");

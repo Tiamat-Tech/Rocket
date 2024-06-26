@@ -2,7 +2,7 @@ error: enums are not supported
  --> tests/ui-fail-stable/from_form.rs:4:1
   |
 4 | enum Thing { }
-  | ^^^^
+  | ^^^^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
  --> tests/ui-fail-stable/from_form.rs:3:10
@@ -16,7 +16,7 @@ error: at least one field is required
  --> tests/ui-fail-stable/from_form.rs:7:1
   |
 7 | struct Foo1;
-  | ^^^^^^
+  | ^^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
  --> tests/ui-fail-stable/from_form.rs:6:10
@@ -93,13 +93,14 @@ error: [help] declared in this field
   --> tests/ui-fail-stable/from_form.rs:36:5
    |
 36 |     foo: usize,
-   |     ^^^
+   |     ^^^^^^^^^^
 
 error: [note] previous field with conflicting name
   --> tests/ui-fail-stable/from_form.rs:34:5
    |
-34 |     #[field(name = "foo")]
-   |     ^
+34 | /     #[field(name = "foo")]
+35 | |     field: String,
+   | |_________________^
 
 error: [note] error occurred while deriving `FromForm`
   --> tests/ui-fail-stable/from_form.rs:32:10
@@ -118,14 +119,16 @@ error: field name conflicts with previous name
 error: [help] declared in this field
   --> tests/ui-fail-stable/from_form.rs:43:5
    |
-43 |     #[field(name = "hello")]
-   |     ^
+43 | /     #[field(name = "hello")]
+44 | |     other: String,
+   | |_________________^
 
 error: [note] previous field with conflicting name
   --> tests/ui-fail-stable/from_form.rs:41:5
    |
-41 |     #[field(name = "hello")]
-   |     ^
+41 | /     #[field(name = "hello")]
+42 | |     first: String,
+   | |_________________^
 
 error: [note] error occurred while deriving `FromForm`
   --> tests/ui-fail-stable/from_form.rs:39:10
@@ -144,14 +147,15 @@ error: field name conflicts with previous name
 error: [help] declared in this field
   --> tests/ui-fail-stable/from_form.rs:50:5
    |
-50 |     #[field(name = "first")]
-   |     ^
+50 | /     #[field(name = "first")]
+51 | |     other: String,
+   | |_________________^
 
 error: [note] previous field with conflicting name
   --> tests/ui-fail-stable/from_form.rs:49:5
    |
 49 |     first: String,
-   |     ^^^^^
+   |     ^^^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
   --> tests/ui-fail-stable/from_form.rs:47:10
@@ -165,7 +169,7 @@ error: unexpected attribute parameter: `field`
   --> tests/ui-fail-stable/from_form.rs:56:28
    |
 56 |     #[field(name = "blah", field = "bloo")]
-   |                            ^^^^^
+   |                            ^^^^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
   --> tests/ui-fail-stable/from_form.rs:54:10
@@ -221,7 +225,7 @@ error: unexpected attribute parameter: `beep`
   --> tests/ui-fail-stable/from_form.rs:80:13
    |
 80 |     #[field(beep = "bop")]
-   |             ^^^^
+   |             ^^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
   --> tests/ui-fail-stable/from_form.rs:78:10
@@ -234,8 +238,10 @@ error: [note] error occurred while deriving `FromForm`
 error: field has conflicting names
   --> tests/ui-fail-stable/from_form.rs:86:5
    |
-86 |     #[field(name = "blah")]
-   |     ^
+86 | /     #[field(name = "blah")]
+87 | |     #[field(name = "blah")]
+88 | |     my_field: String,
+   | |____________________^
 
 error: [note] this field name...
   --> tests/ui-fail-stable/from_form.rs:86:20
@@ -393,7 +399,7 @@ error: duplicate attribute parameter: default
    --> tests/ui-fail-stable/from_form.rs:177:26
     |
 177 |     #[field(default = 1, default = 2)]
-    |                          ^^^^^^^
+    |                          ^^^^^^^^^^^
 
 error: [note] error occurred while deriving `FromForm`
    --> tests/ui-fail-stable/from_form.rs:175:10
@@ -407,8 +413,13 @@ error: duplicate default field expression
        = help: at most one `default` or `default_with` is allowed
    --> tests/ui-fail-stable/from_form.rs:184:23
     |
+181 | #[derive(FromForm)]
+    |          -------- in this derive macro expansion
+...
 184 |     #[field(default = 2)]
     |                       ^
+    |
+    = note: this error originates in the derive macro `FromForm` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: [note] error occurred while deriving `FromForm`
    --> tests/ui-fail-stable/from_form.rs:181:10
@@ -422,8 +433,13 @@ error: duplicate default expressions
        = help: only one of `default` or `default_with` must be used
    --> tests/ui-fail-stable/from_form.rs:190:23
     |
+188 | #[derive(FromForm)]
+    |          -------- in this derive macro expansion
+189 | struct Default3 {
 190 |     #[field(default = 1, default_with = None)]
     |                       ^
+    |
+    = note: this error originates in the derive macro `FromForm` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: [note] other default expression is here
    --> tests/ui-fail-stable/from_form.rs:190:41
@@ -443,8 +459,13 @@ error: duplicate default expressions
        = help: only one of `default` or `default_with` must be used
    --> tests/ui-fail-stable/from_form.rs:197:23
     |
+194 | #[derive(FromForm)]
+    |          -------- in this derive macro expansion
+...
 197 |     #[field(default = 1)]
     |                       ^
+    |
+    = note: this error originates in the derive macro `FromForm` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: [note] other default expression is here
    --> tests/ui-fail-stable/from_form.rs:196:28
@@ -519,6 +540,9 @@ error[E0308]: mismatched types
 help: the type constructed contains `{integer}` due to the type of the argument passed
    --> tests/ui-fail-stable/from_form.rs:171:23
     |
+169 | #[derive(FromForm)]
+    |          -------- in this derive macro expansion
+170 | struct Default0 {
 171 |     #[field(default = 123)]
     |                       ^^^ this argument influences the type of `Some`
 note: tuple variant defined here
@@ -526,6 +550,7 @@ note: tuple variant defined here
     |
     |     Some(#[stable(feature = "rust1", since = "1.0.0")] T),
     |     ^^^^
+    = note: this error originates in the derive macro `FromForm` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
    --> tests/ui-fail-stable/from_form.rs:203:33
@@ -552,8 +577,14 @@ note: tuple variant defined here
 error[E0277]: the trait bound `bool: From<&str>` is not satisfied
    --> tests/ui-fail-stable/from_form.rs:209:23
     |
+207 | #[derive(FromForm)]
+    |          -------- in this derive macro expansion
+208 | struct Default6 {
 209 |     #[field(default = "no conversion")]
-    |                       ^^^^^^^^^^^^^^^ the trait `From<&str>` is not implemented for `bool`
+    |                       ^^^^^^^^^^^^^^^
+    |                       |
+    |                       the trait `From<&str>` is not implemented for `bool`, which is required by `&str: Into<_>`
+    |                       this tail expression is of type `&str`
     |
     = help: the following other types implement trait `From<T>`:
               <bool as From<format_description::parse::format_item::HourBase>>
@@ -565,3 +596,4 @@ error[E0277]: the trait bound `bool: From<&str>` is not satisfied
               <bool as From<format_description::parse::format_item::WeekdayOneIndexed>>
               <bool as From<format_description::parse::format_item::YearBase>>
     = note: required for `&str` to implement `Into<bool>`
+    = note: this error originates in the derive macro `FromForm` (in Nightly builds, run with -Z macro-backtrace for more info)

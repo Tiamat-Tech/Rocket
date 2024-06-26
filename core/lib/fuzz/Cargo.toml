@@ -8,6 +8,9 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(honggfuzz)', 'cfg(afl)'] }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1.3", features = ["derive"] }

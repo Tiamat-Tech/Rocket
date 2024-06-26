@@ -5,12 +5,15 @@ workspace = "../../"
 edition = "2021"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 rocket = { path = "../../core/lib", features = ["secrets"] }
 
 [dev-dependencies]
 rocket = { path = "../../core/lib", features = ["secrets", "json", "mtls"] }
-figment = { version = "0.10", features = ["toml", "env"] }
+figment = { version = "0.10.17", features = ["toml", "env"] }
 tokio = { version = "1", features = ["macros", "io-std"] }
 rand = "0.8"
 

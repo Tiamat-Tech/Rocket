@@ -1,4 +1,5 @@
-use rocket::config::{Config, LogLevel};
+use rocket::config::Config;
+use rocket::trace::{Level, TraceFormat};
 
 async fn test_config(profile: &str) {
     let provider = Config::figment().select(profile);
@@ -8,12 +9,14 @@ async fn test_config(profile: &str) {
         "debug" => {
             assert_eq!(config.workers, 1);
             assert_eq!(config.keep_alive, 0);
-            assert_eq!(config.log_level, LogLevel::Normal);
+            assert_eq!(config.log_level, Some(Level::INFO));
+            assert_eq!(config.log_format, TraceFormat::Pretty);
         }
         "release" => {
             assert_eq!(config.workers, 12);
             assert_eq!(config.keep_alive, 5);
-            assert_eq!(config.log_level, LogLevel::Critical);
+            assert_eq!(config.log_level, Some(Level::ERROR));
+            assert_eq!(config.log_format, TraceFormat::Compact);
             assert!(!config.secret_key.is_zero());
         }
         _ => {

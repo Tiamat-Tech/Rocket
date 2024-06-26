@@ -1,11 +1,10 @@
-#[cfg(all(feature = "diesel_sqlite_pool"))]
 #[cfg(test)]
+#[cfg(all(feature = "diesel_sqlite_pool"))]
 mod sqlite_shutdown_test {
     use rocket::{async_test, Build, Rocket};
     use rocket_sync_db_pools::database;
 
     #[database("test")]
-    #[allow(dead_code)]
     struct Pool(diesel::SqliteConnection);
 
     async fn rocket() -> Rocket<Build> {

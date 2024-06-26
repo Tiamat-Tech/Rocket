@@ -138,10 +138,10 @@ macro_rules! pub_client_impl {
         use crate::config;
 
         let figment = rocket.figment().clone()
-            .merge((config::Config::LOG_LEVEL, config::LogLevel::Debug))
+            .merge((config::Config::LOG_LEVEL, "debug"))
             .select(config::Config::DEBUG_PROFILE);
 
-        Self::tracked(rocket.configure(figment)) $(.$suffix)?
+        Self::tracked(rocket.reconfigure(figment)) $(.$suffix)?
     }
 
     /// Returns a reference to the `Rocket` this client is creating requests

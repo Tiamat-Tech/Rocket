@@ -2,15 +2,18 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::time::Duration;
+use std::any::Any;
+use std::future::Future;
+use std::panic::Location;
 
-use yansi::Paint;
 use either::Either;
 use figment::{Figment, Provider};
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures::TryFutureExt;
 
 use crate::shutdown::{Stages, Shutdown};
+use crate::trace::{Trace, TraceAll};
 use crate::{sentinel, shield::Shield, Catcher, Config, Route};
-use crate::listener::{Bindable, DefaultListener, Endpoint, Listener};
+use crate::listener::{Bind, DefaultListener, Endpoint, Listener};
 use crate::router::Router;
 use crate::fairing::{Fairing, Fairings};
 use crate::phase::{Phase, Build, Building, Ignite, Igniting, Orbit, Orbiting};
@@ -18,7 +21,6 @@ use crate::phase::{Stateful, StateRef, State};
 use crate::http::uri::Origin;
 use crate::http::ext::IntoOwned;
 use crate::error::{Error, ErrorKind};
-use crate::log::PaintExt;
 
 /// The application server itself.
 ///
@@ -183,25 +185,16 @@ impl Rocket<Build> {
     /// ```
     #[must_use]
     pub fn custom<T: Provider>(provider: T) -> Self {
-        // We initialize the logger here so that logging from fairings and so on
-        // are visible; we use the final config to set a max log-level in ignite
-        crate::log::init_default();
-
-        let rocket: Rocket<Build> = Rocket(Building {
-            figment: Figment::from(provider),
-            ..Default::default()
-        });
-
-        rocket.attach(Shield::default())
+        Rocket::<Build>(Building::default())
+            .reconfigure(provider)
+            .attach(Shield::default())
     }
 
-    /// Sets the configuration provider in `self` to `provider`.
+    /// Overrides the current configuration provider with `provider`.
     ///
-    /// A [`Figment`] generated from the current `provider` can _always_ be
-    /// retrieved via [`Rocket::figment()`]. However, because the provider can
-    /// be changed at any point prior to ignition, a [`Config`] can only be
-    /// retrieved in the ignite or orbit phases, or by manually extracting one
-    /// from a particular figment.
+    /// The default provider, or a provider previously set with
+    /// [`Rocket::custom()`] or [`Rocket::reconfigure()`], is overriden by
+    /// `provider`.
     ///
     /// # Example
     ///
@@ -227,7 +220,7 @@ impl Rocket<Build> {
     ///     .merge((Config::IDENT, "Example"));
     ///
     /// let rocket = rocket::custom(&config)
-    ///     .configure(figment)
+    ///     .reconfigure(figment)
     ///     .ignite().await?;
     ///
     /// assert_eq!(rocket.config().ident.as_str(), Some("Example"));
@@ -236,8 +229,13 @@ impl Rocket<Build> {
     /// # });
     /// ```
     #[must_use]
-    pub fn configure<T: Provider>(mut self, provider: T) -> Self {
+    pub fn reconfigure<T: Provider>(mut self, provider: T) -> Self {
+        // We initialize the logger here so that logging from fairings and so on
+        // are visible; we use the final config to set a max log-level in ignite
         self.figment = Figment::from(provider);
+        crate::trace::init(Config::try_from(&self.figment).ok().as_ref());
+        span_trace!("reconfigure" => self.figment().trace_trace());
+
         self
     }
 
@@ -247,20 +245,18 @@ impl Rocket<Build> {
               B::Error: fmt::Display,
               M: Fn(&Origin<'a>, T) -> T,
               F: Fn(&mut Self, T),
-              T: Clone + fmt::Display,
+              T: Clone + Trace,
     {
         let mut base = match base.clone().try_into() {
             Ok(origin) => origin.into_owned(),
             Err(e) => {
-                error!("invalid {} base: {}", kind, Paint::white(&base));
-                error_!("{}", e);
-                info_!("{} {}", "in".primary(), std::panic::Location::caller());
+                error!(%base, location = %Location::caller(), "invalid {kind} base uri: {e}");
                 panic!("aborting due to {} base error", kind);
             }
         };
 
         if base.query().is_some() {
-            warn!("query in {} base '{}' is ignored", kind, Paint::white(&base));
+            warn!(%base, location = %Location::caller(), "query in {kind} base is ignored");
             base.clear_query();
         }
 
@@ -520,7 +516,7 @@ impl Rocket<Build> {
     /// #[rocket::main]
     /// async fn main() -> Result<(), rocket::Error> {
     ///     let rocket = rocket::build()
-    ///         # .configure(rocket::Config::debug_default())
+    ///         # .reconfigure(rocket::Config::debug_default())
     ///         .attach(AdHoc::on_ignite("Manage State", |rocket| async move {
     ///             rocket.manage(String::from("managed string"))
     ///         }));
@@ -538,10 +534,10 @@ impl Rocket<Build> {
         self = Fairings::handle_ignite(self).await;
         self.fairings.audit().map_err(|f| ErrorKind::FailedFairings(f.to_vec()))?;
 
-        // Extract the configuration; initialize the logger.
+        // Extract the configuration; initialize default trace subscriber.
         #[allow(unused_mut)]
         let mut config = Config::try_from(&self.figment).map_err(ErrorKind::Config)?;
-        crate::log::init(&config);
+        crate::trace::init(&config);
 
         // Check for safely configured secrets.
         #[cfg(feature = "secrets")]
@@ -554,27 +550,28 @@ impl Rocket<Build> {
                 config.secret_key = crate::config::SecretKey::generate()
                     .unwrap_or_else(crate::config::SecretKey::zero);
             }
-        } else if config.known_secret_key_used() {
-            warn!("The configured `secret_key` is exposed and insecure.");
-            warn_!("The configured key is publicly published and thus insecure.");
-            warn_!("Try generating a new key with `head -c64 /dev/urandom | base64`.");
         }
 
         // Initialize the router; check for collisions.
         let mut router = Router::new();
         self.routes.clone().into_iter().for_each(|r| router.add_route(r));
         self.catchers.clone().into_iter().for_each(|c| router.add_catcher(c));
-        router.finalize().map_err(ErrorKind::Collisions)?;
+        router.finalize().map_err(|(r, c)| ErrorKind::Collisions { routes: r, catchers: c, })?;
 
-        // Finally, freeze managed state.
+        // Finally, freeze managed state for faster access later.
         self.state.freeze();
 
         // Log everything we know: config, routes, catchers, fairings.
         // TODO: Store/print managed state type names?
-        config.pretty_print(self.figment());
-        log_items("📬 ", "Routes", self.routes(), |r| &r.uri.base, |r| &r.uri);
-        log_items("🥅 ", "Catchers", self.catchers(), |c| &c.base, |c| &c.base);
-        self.fairings.pretty_print();
+        let fairings = self.fairings.unique_set();
+        span_info!("config", profile = %self.figment().profile() => {
+            config.trace_info();
+            self.figment().trace_debug();
+        });
+
+        span_info!("routes", count = self.routes.len() => self.routes().trace_all_info());
+        span_info!("catchers", count = self.catchers.len() => self.catchers().trace_all_info());
+        span_info!("fairings", count = fairings.len() => fairings.trace_all_info());
 
         // Ignite the rocket.
         let rocket: Rocket<Ignite> = Rocket(Igniting {
@@ -591,22 +588,6 @@ impl Rocket<Build> {
 
         Ok(rocket)
     }
-}
-
-fn log_items<T, I, B, O>(e: &str, t: &str, items: I, base: B, origin: O)
-    where T: fmt::Display + Copy, I: Iterator<Item = T>,
-          B: Fn(&T) -> &Origin<'_>, O: Fn(&T) -> &Origin<'_>
-{
-    let mut items: Vec<_> = items.collect();
-    if !items.is_empty() {
-        launch_meta!("{}{}:", e.emoji(), t.magenta());
-    }
-
-    items.sort_by_key(|i| origin(i).path().as_str().chars().count());
-    items.sort_by_key(|i| origin(i).path().segments().count());
-    items.sort_by_key(|i| base(i).path().as_str().chars().count());
-    items.sort_by_key(|i| base(i).path().segments().count());
-    items.iter().for_each(|i| launch_meta_!("{}", i));
 }
 
 impl Rocket<Ignite> {
@@ -681,25 +662,14 @@ impl Rocket<Ignite> {
         rocket
     }
 
-    async fn _launch(self) -> Result<Rocket<Ignite>, Error> {
-        let config = self.figment().extract::<DefaultListener>()?;
-        either::for_both!(config.base_bindable()?, base => {
-            either::for_both!(config.tls_bindable(base), bindable => {
-                self._launch_on(bindable).await
-            })
-        })
-    }
-
-    async fn _launch_on<B: Bindable>(self, bindable: B) -> Result<Rocket<Ignite>, Error>
-        where <B::Listener as Listener>::Connection: AsyncRead + AsyncWrite
-    {
-        let rocket = self.bind_and_serve(bindable, |rocket| async move {
+    async fn _launch<L: Listener + 'static>(self, listener: L) -> Result<Rocket<Ignite>, Error> {
+        let rocket = self.listen_and_serve(listener, |rocket| async move {
             let rocket = Arc::new(rocket);
 
             rocket.shutdown.spawn_listener(&rocket.config.shutdown);
             if let Err(e) = tokio::spawn(Rocket::liftoff(rocket.clone())).await {
                 let rocket = rocket.try_wait_shutdown().await.map(Box::new);
-                return Err(ErrorKind::Liftoff(rocket, Box::new(e)).into());
+                return Err(ErrorKind::Liftoff(rocket, e).into());
             }
 
             Ok(rocket)
@@ -747,7 +717,7 @@ impl Rocket<Orbit> {
         match Arc::try_unwrap(self) {
             Ok(rocket) => {
                 info!("Graceful shutdown completed successfully.");
-                Ok(rocket.into_ignite())
+                Ok(rocket.deorbit())
             }
             Err(rocket) => {
                 warn!("Shutdown failed: outstanding background I/O.");
@@ -756,7 +726,7 @@ impl Rocket<Orbit> {
         }
     }
 
-    pub(crate) fn into_ignite(self) -> Rocket<Ignite> {
+    pub(crate) fn deorbit(self) -> Rocket<Ignite> {
         Rocket(Igniting {
             router: self.0.router,
             fairings: self.0.fairings,
@@ -772,14 +742,14 @@ impl Rocket<Orbit> {
         rocket.fairings.handle_liftoff(rocket).await;
 
         if !crate::running_within_rocket_async_rt().await {
-            warn!("Rocket is executing inside of a custom runtime.");
-            info_!("Rocket's runtime is enabled via `#[rocket::main]` or `#[launch]`.");
-            info_!("Forced shutdown is disabled. Runtime settings may be suboptimal.");
+            warn!(
+                "Rocket is executing inside of a custom runtime.\n\
+                Rocket's runtime is enabled via `#[rocket::main]` or `#[launch]`\n\
+                Forced shutdown is disabled. Runtime settings may be suboptimal."
+            );
         }
 
-        launch_info!("{}{} {}", "🚀 ".emoji(),
-            "Rocket has launched on".bold().primary().linger(),
-            rocket.endpoints[0].underline());
+        tracing::info!(name: "liftoff", endpoint = %rocket.endpoints[0]);
     }
 
     /// Returns the finalized, active configuration. This is guaranteed to
@@ -927,6 +897,12 @@ impl<P: Phase> Rocket<P> {
     /// `self`. To extract a typed config, prefer to use
     /// [`AdHoc::config()`](crate::fairing::AdHoc::config()).
     ///
+    /// Note; A [`Figment`] generated from the current `provider` can _always_
+    /// be retrieved via this method. However, because the provider can be
+    /// changed at any point prior to ignition, a [`Config`] can only be
+    /// retrieved in the ignite or orbit phases, or by manually extracting one
+    /// from a particular figment.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -941,14 +917,16 @@ impl<P: Phase> Rocket<P> {
         }
     }
 
-    pub(crate) async fn local_launch(self, e: Endpoint) -> Result<Rocket<Orbit>, Error> {
-        let rocket = match self.0.into_state() {
-            State::Build(s) => Rocket::from(s).ignite().await?._local_launch(e).await,
-            State::Ignite(s) => Rocket::from(s)._local_launch(e).await,
-            State::Orbit(s) => Rocket::from(s)
-        };
+    async fn into_ignite(self) -> Result<Rocket<Ignite>, Error> {
+        match self.0.into_state() {
+            State::Build(s) => Rocket::from(s).ignite().await,
+            State::Ignite(s) => Ok(Rocket::from(s)),
+            State::Orbit(s) => Ok(Rocket::from(s).deorbit()),
+        }
+    }
 
-        Ok(rocket)
+    pub(crate) async fn local_launch(self, e: Endpoint) -> Result<Rocket<Orbit>, Error> {
+        Ok(self.into_ignite().await?._local_launch(e).await)
     }
 
     /// Returns a `Future` that transitions this instance of `Rocket` from any
@@ -996,21 +974,45 @@ impl<P: Phase> Rocket<P> {
     /// }
     /// ```
     pub async fn launch(self) -> Result<Rocket<Ignite>, Error> {
-        match self.0.into_state() {
-            State::Build(s) => Rocket::from(s).ignite().await?._launch().await,
-            State::Ignite(s) => Rocket::from(s)._launch().await,
-            State::Orbit(s) => Ok(Rocket::from(s).into_ignite())
+        self.launch_with::<DefaultListener>().await
+    }
+
+    pub async fn launch_with<B: Bind>(self) -> Result<Rocket<Ignite>, Error> {
+        let rocket = self.into_ignite().await?;
+        let bind_endpoint = B::bind_endpoint(&rocket).ok();
+        let listener: B = B::bind(&rocket).await
+            .map_err(|e| ErrorKind::Bind(bind_endpoint, Box::new(e)))?;
+
+        let any: Box<dyn Any + Send + Sync> = Box::new(listener);
+        match any.downcast::<DefaultListener>() {
+            Ok(listener) => {
+                let listener = *listener;
+                crate::util::for_both!(listener, listener => {
+                    crate::util::for_both!(listener, listener => {
+                        rocket._launch(listener).await
+                    })
+                })
+            }
+            Err(any) => {
+                let listener = *any.downcast::<B>().unwrap();
+                rocket._launch(listener).await
+            }
         }
     }
 
-    pub async fn launch_on<B: Bindable>(self, bindable: B) -> Result<Rocket<Ignite>, Error>
-        where <B::Listener as Listener>::Connection: AsyncRead + AsyncWrite
+    pub async fn try_launch_on<L, F, E>(self, listener: F) -> Result<Rocket<Ignite>, Error>
+        where L: Listener + 'static,
+              F: Future<Output = Result<L, E>>,
+              E: std::error::Error + Send + 'static
     {
-        match self.0.into_state() {
-            State::Build(s) => Rocket::from(s).ignite().await?._launch_on(bindable).await,
-            State::Ignite(s) => Rocket::from(s)._launch_on(bindable).await,
-            State::Orbit(s) => Ok(Rocket::from(s).into_ignite())
-        }
+        let listener = listener.map_err(|e| ErrorKind::Bind(None, Box::new(e))).await?;
+        self.into_ignite().await?._launch(listener).await
+    }
+
+    pub async fn launch_on<L>(self, listener: L) -> Result<Rocket<Ignite>, Error>
+        where L: Listener + 'static,
+    {
+        self.into_ignite().await?._launch(listener).await
     }
 }
 

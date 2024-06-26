@@ -154,9 +154,8 @@ pub trait Pool: Sized + Send + Sync + 'static {
 
 #[cfg(feature = "deadpool")]
 mod deadpool_postgres {
-    use deadpool::{managed::{Manager, Pool, PoolError, Object, BuildError}, Runtime};
+    use deadpool::{Runtime, managed::{Manager, Pool, PoolError, Object}};
     use super::{Duration, Error, Config, Figment};
-    use rocket::Either;
 
     pub trait DeadManager: Manager + Sized + Send + Sync + 'static {
         fn new(config: &Config) -> Result<Self, Self::Error>;
@@ -180,13 +179,13 @@ mod deadpool_postgres {
     impl<M: DeadManager, C: From<Object<M>>> crate::Pool for Pool<M, C>
         where M::Type: Send, C: Send + Sync + 'static, M::Error: std::error::Error
     {
-        type Error = Error<Either<M::Error, BuildError>, PoolError<M::Error>>;
+        type Error = Error<PoolError<M::Error>>;
 
         type Connection = C;
 
         async fn init(figment: &Figment) -> Result<Self, Self::Error> {
             let config: Config = figment.extract()?;
-            let manager = M::new(&config).map_err(|e| Error::Init(Either::Left(e)))?;
+            let manager = M::new(&config).map_err(|e| Error::Init(e.into()))?;
 
             Pool::builder(manager)
                 .max_size(config.max_connections)
@@ -195,7 +194,7 @@ mod deadpool_postgres {
                 .recycle_timeout(config.idle_timeout.map(Duration::from_secs))
                 .runtime(Runtime::Tokio1)
                 .build()
-                .map_err(|e| Error::Init(Either::Right(e)))
+                .map_err(|_| Error::Init(PoolError::NoRuntimeSpecified))
         }
 
         async fn get(&self) -> Result<Self::Connection, Self::Error> {
@@ -270,7 +269,7 @@ mod deadpool_old {
 mod sqlx {
     use sqlx::ConnectOptions;
     use super::{Duration, Error, Config, Figment};
-    use rocket::config::LogLevel;
+    use rocket::tracing::level_filters::LevelFilter;
 
     type Options<D> = <<D as sqlx::Database>::Connection as sqlx::Connection>::Options;
 
@@ -281,6 +280,12 @@ mod sqlx {
             *o = std::mem::take(o)
                 .busy_timeout(Duration::from_secs(__config.connect_timeout))
                 .create_if_missing(true);
+
+            if let Some(ref exts) = __config.extensions {
+                for ext in exts {
+                    *o = std::mem::take(o).extension(ext.clone());
+                }
+            }
         }
     }
 
@@ -296,10 +301,19 @@ mod sqlx {
             specialize(&mut opts, &config);
 
             opts = opts.disable_statement_logging();
-            if let Ok(level) = figment.extract_inner::<LogLevel>(rocket::Config::LOG_LEVEL) {
-                if !matches!(level, LogLevel::Normal | LogLevel::Off) {
-                    opts = opts.log_statements(level.into())
-                        .log_slow_statements(level.into(), Duration::default());
+            if let Ok(value) = figment.find_value(rocket::Config::LOG_LEVEL) {
+                if let Some(level) = value.as_str().and_then(|v| v.parse().ok()) {
+                    let log_level = match level {
+                        LevelFilter::OFF => log::LevelFilter::Off,
+                        LevelFilter::ERROR => log::LevelFilter::Error,
+                        LevelFilter::WARN => log::LevelFilter::Warn,
+                        LevelFilter::INFO => log::LevelFilter::Info,
+                        LevelFilter::DEBUG => log::LevelFilter::Debug,
+                        LevelFilter::TRACE => log::LevelFilter::Trace,
+                    };
+
+                    opts = opts.log_statements(log_level)
+                        .log_slow_statements(log_level, Duration::default());
                 }
             }
 

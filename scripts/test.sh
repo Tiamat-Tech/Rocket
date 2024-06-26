@@ -136,6 +136,7 @@ function test_core() {
     json
     msgpack
     uuid
+    trace
   )
 
   echo ":: Building and checking core [no features]..."
@@ -171,17 +172,32 @@ function test_default() {
   echo ":: Checking fuzzers..."
   indir "${FUZZ_ROOT}" $CARGO update
   indir "${FUZZ_ROOT}" $CARGO check --all --all-features $@
+
+  case "$OSTYPE" in
+      darwin* | linux*)
+          echo ":: Checking testbench..."
+          indir "${TESTBENCH_ROOT}" $CARGO update
+          indir "${TESTBENCH_ROOT}" $CARGO check $@
+          ;;
+      *) echo ":: Skipping testbench [$OSTYPE]" ;;
+  esac
 }
 
 function test_ui() {
   echo ":: Testing compile-time UI output..."
-  indir "${PROJECT_ROOT}" $CARGO test ui --all --all-features -- --ignored $@
+  indir "${PROJECT_ROOT}" $CARGO test --test ui-fail --all --all-features -- --ignored $@
 }
 
 function run_benchmarks() {
   echo ":: Running benchmarks..."
   indir "${BENCHMARKS_ROOT}" $CARGO update
   indir "${BENCHMARKS_ROOT}" $CARGO bench $@
+}
+
+function run_testbench() {
+  echo ":: Running testbench..."
+  indir "${TESTBENCH_ROOT}" $CARGO update
+  indir "${TESTBENCH_ROOT}" $CARGO run $@
 }
 
 if [[ $1 == +* ]]; then
@@ -191,7 +207,7 @@ fi
 
 # The kind of test we'll be running.
 TEST_KIND="default"
-KINDS=("contrib" "benchmarks" "core" "examples" "default" "ui" "all")
+KINDS=("contrib" "benchmarks" "testbench" "core" "examples" "default" "ui" "all")
 
 if [[ " ${KINDS[@]} " =~ " ${1#"--"} " ]]; then
   TEST_KIND=${1#"--"}
@@ -226,12 +242,14 @@ case $TEST_KIND in
   examples) test_examples $@ ;;
   default) test_default $@ ;;
   benchmarks) run_benchmarks $@ ;;
+  testbench) run_testbench $@ ;;
   ui) test_ui $@ ;;
   all)
     test_default $@ & default=$!
     test_examples $@ & examples=$!
     test_core $@ & core=$!
     test_contrib $@ & contrib=$!
+    run_testbench $@ & testbench=$!
     test_ui $@ & ui=$!
 
     failures=()
@@ -239,6 +257,7 @@ case $TEST_KIND in
     if ! wait $examples ; then failures+=("EXAMPLES"); fi
     if ! wait $core ; then failures+=("CORE"); fi
     if ! wait $contrib ; then failures+=("CONTRIB"); fi
+    if ! wait $testbench ; then failures+=("TESTBENCH"); fi
     if ! wait $ui ; then failures+=("UI"); fi
 
     if [ ${#failures[@]} -ne 0 ]; then

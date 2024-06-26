@@ -1,14 +1,15 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
+use std::marker::PhantomData;
 
 use rocket::{Phase, Rocket, Ignite, Sentinel};
 use rocket::fairing::{AdHoc, Fairing};
 use rocket::request::{Request, Outcome, FromRequest};
 use rocket::outcome::IntoOutcome;
 use rocket::http::Status;
+use rocket::trace::Trace;
 
-use rocket::tokio::sync::{OwnedSemaphorePermit, Semaphore, Mutex};
 use rocket::tokio::time::timeout;
+use rocket::tokio::sync::{OwnedSemaphorePermit, Semaphore, Mutex};
 
 use crate::{Config, Poolable, Error};
 
@@ -60,45 +61,50 @@ async fn run_blocking<F, R>(job: F) -> R
     }
 }
 
-macro_rules! dberr {
-    ($msg:literal, $db_name:expr, $efmt:literal, $error:expr, $rocket:expr) => ({
-        rocket::error!(concat!("database ", $msg, " error for pool named `{}`"), $db_name);
-        error_!($efmt, $error);
-        return Err($rocket);
-    });
-}
-
 impl<K: 'static, C: Poolable> ConnectionPool<K, C> {
-    pub fn fairing(fairing_name: &'static str, db: &'static str) -> impl Fairing {
+    pub fn fairing(fairing_name: &'static str, database: &'static str) -> impl Fairing {
         AdHoc::try_on_ignite(fairing_name, move |rocket| async move {
             run_blocking(move || {
-                let config = match Config::from(db, &rocket) {
+                let config = match Config::from(database, &rocket) {
                     Ok(config) => config,
-                    Err(e) => dberr!("config", db, "{}", e, rocket),
+                    Err(e) => {
+                        span_error!("database configuration error", database => e.trace_error());
+                        return Err(rocket);
+                    }
                 };
 
                 let pool_size = config.pool_size;
-                match C::pool(db, &rocket) {
+                match C::pool(database, &rocket) {
                     Ok(pool) => Ok(rocket.manage(ConnectionPool::<K, C> {
                         config,
                         pool: Some(pool),
                         semaphore: Arc::new(Semaphore::new(pool_size as usize)),
                         _marker: PhantomData,
                     })),
-                    Err(Error::Config(e)) => dberr!("config", db, "{}", e, rocket),
-                    Err(Error::Pool(e)) => dberr!("pool init", db, "{}", e, rocket),
-                    Err(Error::Custom(e)) => dberr!("pool manager", db, "{:?}", e, rocket),
+                    Err(Error::Config(e)) => {
+                        span_error!("database configuration error", database => e.trace_error());
+                        Err(rocket)
+                    }
+                    Err(Error::Pool(reason)) => {
+                        error!(database, %reason, "database pool initialization failed");
+                        Err(rocket)
+                    }
+                    Err(Error::Custom(reason)) => {
+                        error!(database, ?reason, "database pool failure");
+                        Err(rocket)
+                    }
                 }
             }).await
         })
     }
 
     pub async fn get(&self) -> Option<Connection<K, C>> {
+        let type_name = std::any::type_name::<K>();
         let duration = std::time::Duration::from_secs(self.config.timeout as u64);
         let permit = match timeout(duration, self.semaphore.clone().acquire_owned()).await {
             Ok(p) => p.expect("internal invariant broken: semaphore should not be closed"),
             Err(_) => {
-                error_!("database connection retrieval timed out");
+                error!(type_name, "database connection retrieval timed out");
                 return None;
             }
         };
@@ -113,7 +119,7 @@ impl<K: 'static, C: Poolable> ConnectionPool<K, C> {
                 _marker: PhantomData,
             }),
             Err(e) => {
-                error_!("failed to get a database connection: {}", e);
+                error!(type_name, "failed to get a database connection: {}", e);
                 None
             }
         }
@@ -125,12 +131,12 @@ impl<K: 'static, C: Poolable> ConnectionPool<K, C> {
             Some(pool) => match pool.get().await {
                 Some(conn) => Some(conn),
                 None => {
-                    error_!("no connections available for `{}`", std::any::type_name::<K>());
+                    error!("no connections available for `{}`", std::any::type_name::<K>());
                     None
                 }
             },
             None => {
-                error_!("missing database fairing for `{}`", std::any::type_name::<K>());
+                error!("missing database fairing for `{}`", std::any::type_name::<K>());
                 None
             }
         }
@@ -165,6 +171,7 @@ impl<K: 'static, C: Poolable> Connection<K, C> {
 
             let conn = connection.as_mut()
                 .expect("internal invariant broken: self.connection is Some");
+
             f(conn)
         }).await
     }
@@ -212,7 +219,9 @@ impl<'r, K: 'static, C: Poolable> FromRequest<'r> for Connection<K, C> {
         match request.rocket().state::<ConnectionPool<K, C>>() {
             Some(c) => c.get().await.or_error((Status::ServiceUnavailable, ())),
             None => {
-                error_!("Missing database fairing for `{}`", std::any::type_name::<K>());
+                let conn = std::any::type_name::<K>();
+                error!("`{conn}::fairing()` is not attached\n\
+                    the fairing must be attached to use `{conn} in routes.");
                 Outcome::Error((Status::InternalServerError, ()))
             }
         }
@@ -221,15 +230,10 @@ impl<'r, K: 'static, C: Poolable> FromRequest<'r> for Connection<K, C> {
 
 impl<K: 'static, C: Poolable> Sentinel for Connection<K, C> {
     fn abort(rocket: &Rocket<Ignite>) -> bool {
-        use rocket::yansi::Paint;
-
         if rocket.state::<ConnectionPool<K, C>>().is_none() {
-            let conn = std::any::type_name::<K>().primary().bold();
-            error!("requesting `{}` DB connection without attaching `{}{}`.",
-                conn, conn.linger(), "::fairing()".resetting());
-
-            info_!("Attach `{}{}` to use database connection pooling.",
-                conn.linger(), "::fairing()".resetting());
+            let conn = std::any::type_name::<K>();
+            error!("`{conn}::fairing()` is not attached\n\
+                the fairing must be attached to use `{conn} in routes.");
 
             return true;
         }

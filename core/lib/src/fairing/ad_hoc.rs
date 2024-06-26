@@ -1,9 +1,10 @@
-use futures::future::{Future, BoxFuture, FutureExt};
 use parking_lot::Mutex;
+use futures::future::{Future, BoxFuture, FutureExt};
 
-use crate::route::RouteUri;
 use crate::{Rocket, Request, Response, Data, Build, Orbit};
 use crate::fairing::{Fairing, Kind, Info, Result};
+use crate::route::RouteUri;
+use crate::trace::Trace;
 
 /// A ad-hoc fairing that can be created from a function or closure.
 ///
@@ -235,7 +236,7 @@ impl AdHoc {
             let app_config = match rocket.figment().extract::<T>() {
                 Ok(config) => config,
                 Err(e) => {
-                    crate::config::pretty_print_error(e);
+                    e.trace_error();
                     return Err(rocket);
                 }
             };
@@ -387,10 +388,10 @@ impl AdHoc {
                 // This allows incremental compatibility updates. Otherwise,
                 // rewrite the request URI to remove the `/`.
                 if !self.routes(req.rocket()).iter().any(|r| r.matches(req)) {
-                    let normal = req.uri().clone().into_normalized_nontrailing();
-                    warn!("Incoming request URI was normalized for compatibility.");
-                    info_!("{} -> {}", req.uri(), normal);
-                    req.set_uri(normal);
+                    let normalized = req.uri().clone().into_normalized_nontrailing();
+                    warn!(original = %req.uri(), %normalized,
+                        "incoming request URI normalized for compatibility");
+                    req.set_uri(normalized);
                 }
             }
         }

@@ -65,7 +65,9 @@ impl Route {
     /// // by default, so Rocket would route the request to `b`, not `a`.
     /// assert!(b.rank < a.rank);
     /// ```
+    #[tracing::instrument(level = "trace", name = "matching", skip_all, ret)]
     pub fn matches(&self, request: &Request<'_>) -> bool {
+        trace!(route.method = %self.method, request.method = %request.method());
         self.method == request.method()
             && paths_match(self, request)
             && queries_match(self, request)
@@ -139,7 +141,7 @@ impl Catcher {
 }
 
 fn paths_match(route: &Route, req: &Request<'_>) -> bool {
-    trace!("checking path match: route {} vs. request {}", route, req);
+    trace!(route.uri = %route.uri, request.uri = %req.uri());
     let route_segments = &route.uri.metadata.uri_segments;
     let req_segments = req.uri().path().segments();
 
@@ -169,22 +171,25 @@ fn paths_match(route: &Route, req: &Request<'_>) -> bool {
 }
 
 fn queries_match(route: &Route, req: &Request<'_>) -> bool {
-    trace!("checking query match: route {} vs. request {}", route, req);
+    trace!(
+        route.query = route.uri.query().map(display),
+        route.query.color = route.uri.metadata.query_color.map(debug),
+        request.query = req.uri().query().map(display),
+    );
+
     if matches!(route.uri.metadata.query_color, None | Some(Color::Wild)) {
         return true;
     }
 
-    let route_query_fields = route.uri.metadata.static_query_fields.iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()));
-
-    for route_seg in route_query_fields {
+    let route_query_fields = route.uri.metadata.static_query_fields.iter();
+    for (key, val) in route_query_fields {
         if let Some(query) = req.uri().query() {
-            if !query.segments().any(|req_seg| req_seg == route_seg) {
-                trace_!("request {} missing static query {:?}", req, route_seg);
+            if !query.segments().any(|req_seg| req_seg == (key, val)) {
+                debug!(key, val, request.query = %query, "missing static query");
                 return false;
             }
         } else {
-            trace_!("query-less request {} missing static query {:?}", req, route_seg);
+            debug!(key, val, "missing static query (queryless request)");
             return false;
         }
     }
@@ -193,19 +198,22 @@ fn queries_match(route: &Route, req: &Request<'_>) -> bool {
 }
 
 fn formats_match(route: &Route, req: &Request<'_>) -> bool {
-    trace!("checking format match: route {} vs. request {}", route, req);
+    trace!(
+        route.format = route.format.as_ref().map(display),
+        request.format = req.format().map(display),
+    );
+
     let route_format = match route.format {
         Some(ref format) => format,
         None => return true,
     };
 
-    if route.method.supports_payload() {
-        match req.format() {
+    match route.method.allows_request_body() {
+        Some(true) => match req.format() {
             Some(f) if f.specificity() == 2 => route_format.collides_with(f),
             _ => false
-        }
-    } else {
-        match req.format() {
+        },
+        _ => match req.format() {
             Some(f) => route_format.collides_with(f),
             None => true
         }
@@ -287,7 +295,7 @@ mod tests {
         let client = Client::debug_with(vec![]).expect("client");
         let mut req = client.req(m, "/");
         if let Some(mt_str) = mt1.into() {
-            if m.supports_payload() {
+            if m.allows_request_body() == Some(true) {
                 req.replace_header(mt_str.parse::<ContentType>().unwrap());
             } else {
                 req.replace_header(mt_str.parse::<Accept>().unwrap());

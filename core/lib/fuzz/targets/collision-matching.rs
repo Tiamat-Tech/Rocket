@@ -185,7 +185,7 @@ type TestData<'a> = (
 fn fuzz((route_a, route_b, req): TestData<'_>) {
     let rocket = rocket::custom(rocket::Config {
         workers: 2,
-        log_level: rocket::log::LogLevel::Off,
+        log_level: None,
         cli_colors: rocket::config::CliColors::Never,
         ..rocket::Config::debug_default()
     });
@@ -204,7 +204,7 @@ fn fuzz((route_a, route_b, req): TestData<'_>) {
 #[cfg(all(not(honggfuzz), not(afl)))]
 libfuzzer_sys::fuzz_target!(|data: TestData| fuzz(data));
 
-#[cfg(honggbuzz)]
+#[cfg(honggfuzz)]
 fn main() {
     loop {
         honggfuzz::fuzz!(|data: TestData| fuzz(data));

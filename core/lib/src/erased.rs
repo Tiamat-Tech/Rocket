@@ -77,6 +77,11 @@ impl ErasedRequest {
         ErasedRequest { _rocket: rocket, _parts: parts, request, }
     }
 
+    pub fn inner(&self) -> &Request<'_> {
+        static_assert_covariance!(Request);
+        &self.request
+    }
+
     pub async fn into_response<T, D>(
         self,
         raw_stream: D,
@@ -135,22 +140,22 @@ impl ErasedResponse {
         f(&mut self.response)
     }
 
-    pub fn make_io_handler<'a>(
+    pub fn make_io_handler<'a, T: 'static>(
         &'a mut self,
         constructor: impl for<'r> FnOnce(
             &'r Request<'r>,
             &'a mut Response<'r>,
-        ) -> Option<Box<dyn IoHandler + 'r>>
-    ) -> Option<ErasedIoHandler> {
+        ) -> Option<(T, Box<dyn IoHandler + 'r>)>
+    ) -> Option<(T, ErasedIoHandler)> {
         let parent: Arc<ErasedRequest> = self._request.clone();
-        let io: Option<Box<dyn IoHandler + '_>> = {
+        let io: Option<(T, Box<dyn IoHandler + '_>)> = {
             let parent: &ErasedRequest = &parent;
             let parent: &'static ErasedRequest = unsafe { transmute(parent) };
             let request: &Request<'_> = &parent.request;
             constructor(request, &mut self.response)
         };
 
-        io.map(|io| ErasedIoHandler { _request: parent, io })
+        io.map(|(v, io)| (v, ErasedIoHandler { _request: parent, io }))
     }
 }
 

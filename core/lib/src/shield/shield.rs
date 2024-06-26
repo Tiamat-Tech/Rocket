@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use yansi::Paint;
-
 use crate::{Rocket, Request, Response, Orbit, Config};
 use crate::fairing::{Fairing, Info, Kind};
 use crate::http::{Header, uncased::UncasedStr};
-use crate::log::PaintExt;
-use crate::shield::*;
+use crate::shield::{Frame, Hsts, NoSniff, Permission, Policy};
+use crate::trace::{Trace, TraceAll};
 
 /// A [`Fairing`] that injects browser security and privacy headers into all
 /// outgoing responses.
@@ -61,10 +59,8 @@ use crate::shield::*;
 ///
 /// If TLS is configured and enabled when the application is launched in a
 /// non-debug profile, HSTS is automatically enabled with its default policy and
-/// a warning is logged.
-///
-/// To get rid of this warning, explicitly [`Shield::enable()`] an [`Hsts`]
-/// policy.
+/// a warning is logged. To get rid of this warning, explicitly
+/// [`Shield::enable()`] an [`Hsts`] policy.
 pub struct Shield {
     /// Enabled policies where the key is the header name.
     policies: HashMap<&'static UncasedStr, Header<'static>>,
@@ -187,6 +183,10 @@ impl Fairing for Shield {
     }
 
     async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
+        if self.policies.is_empty() {
+            return;
+        }
+
         let force_hsts = rocket.endpoints().all(|v| v.is_tls())
             && rocket.figment().profile() != Config::DEBUG_PROFILE
             && !self.is_enabled::<Hsts>();
@@ -195,19 +195,15 @@ impl Fairing for Shield {
             self.force_hsts.store(true, Ordering::Release);
         }
 
-        if !self.policies.is_empty() {
-            info!("{}{}:", "🛡️ ".emoji(), "Shield".magenta());
-
-            for header in self.policies.values() {
-                info_!("{}: {}", header.name(), header.value().primary());
-            }
+        span_info!("shield", policies = self.policies.len() => {
+            self.policies.values().trace_all_info();
 
             if force_hsts {
-                warn_!("Detected TLS-enabled liftoff without enabling HSTS.");
-                warn_!("Shield has enabled a default HSTS policy.");
-                info_!("To remove this warning, configure an HSTS policy.");
+                warn!("Detected TLS-enabled liftoff without enabling HSTS.\n\
+                    Shield has enabled a default HSTS policy.\n\
+                    To remove this warning, configure an HSTS policy.");
             }
-        }
+        })
     }
 
     async fn on_response<'r>(&self, _: &'r Request<'_>, response: &mut Response<'r>) {
@@ -215,8 +211,10 @@ impl Fairing for Shield {
         // the header is not already in the response.
         for header in self.policies.values() {
             if response.headers().contains(header.name()) {
-                warn!("Shield: response contains a '{}' header.", header.name());
-                warn_!("Refusing to overwrite existing header.");
+                span_warn!("shield", "shield refusing to overwrite existing response header" => {
+                    header.trace_warn();
+                });
+
                 continue
             }
 

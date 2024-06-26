@@ -11,8 +11,8 @@ mod databases_tests {
     struct PrimaryDb(diesel::PgConnection);
 }
 
-#[cfg(all(feature = "databases", feature = "sqlite_pool"))]
 #[cfg(test)]
+#[cfg(all(feature = "sqlite_pool"))]
 mod rusqlite_integration_test {
     use rocket_sync_db_pools::{rusqlite, database};
 
@@ -58,13 +58,13 @@ mod rusqlite_integration_test {
 }
 
 #[cfg(test)]
-#[cfg(feature = "databases")]
 mod sentinel_and_runtime_test {
     use rocket::{Rocket, Build};
     use r2d2::{ManageConnection, Pool};
     use rocket_sync_db_pools::{database, Poolable, PoolResult};
     use tokio::runtime::Runtime;
 
+    #[allow(dead_code)]
     struct ContainsRuntime(Runtime);
     struct TestConnection;
 

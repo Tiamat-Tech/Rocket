@@ -238,22 +238,6 @@ impl<'a> RouteUri<'a> {
         // We subtract `3` because `raw_path` is never `0`: 0b0100 = 4 - 3 = 1.
         -((raw_weight as isize) - 3)
     }
-
-    pub(crate) fn color_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use yansi::Paint;
-
-        let (path, base, unmounted) = (self.uri.path(), self.base(), self.unmounted().path());
-        let unmounted_part = path.strip_prefix(base.as_str())
-            .map(|raw| raw.as_str())
-            .unwrap_or(unmounted.as_str());
-
-        write!(f, "{}{}", self.base().blue().underline(), unmounted_part.blue())?;
-        if let Some(q) = self.unmounted().query() {
-            write!(f, "{}{}", "?".yellow(), q.yellow())?;
-        }
-
-        Ok(())
-    }
 }
 
 impl Metadata {

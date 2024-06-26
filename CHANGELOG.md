@@ -1,3 +1,79 @@
+# Version 0.5.1 (May 22, 2024)
+
+This release contains the following crate updates:
+
+  - `rocket` `0.5.1`
+  - `rocket_db_pools` `0.2.0`
+  - `rocket_dyn_templates` `0.2.0`
+  - `rocket_ws` `0.1.1`
+
+## [`rocket`](https://api.rocket.rs/v0.5/rocket/) `0.5.1`
+
+  * The following `char` and `std::ops::Range` types now implement `FromForm`:
+
+    - `char`
+    - `Range<T: FromForm>` with `start` and `end` fields
+    - `RangeFrom<T: FromForm>` with `start` field
+    - `RangeTo<T: FromForm>` with `end` field
+    - `RangeToInclusive<T: FromForm>` with `end` field
+
+  * `[T; N]`, `Vec<T>`, and `[u8]` can now be passed to `uri!`.
+
+  * The guide now includes a [deploying section].
+
+  * The `FromForm` derive now properly records errors involving entire forms.
+
+  * `FromForm` derive can now be used in code emitted by `macro_rules!` macros.
+
+  * **(fix [#2668] via [52de9a])** [`TempFile`] now ensures it flushes before
+    being persisted.
+
+## [`rocket_db_pools`](https://api.rocket.rs/v0.5/rocket_db_pools/) `0.2.0`
+
+  * SQLite extensions are now supported in `sqlx_sqlite`.
+
+    Use a database configuration option of `extensions` to specify extensions:
+
+    ```toml
+    [default.databases.db_name]
+    url = "db.sqlite"
+    # This option is only supported by the `sqlx_sqlite` driver.
+    extensions = ["memvfs", "rot13"]
+    ```
+
+  * (**breaking**) `deadpool` was updated to `0.13`.
+
+  * (**breaking**) The [`Config`](https://api.rocket.rs/v0.5/rocket_db_pools/struct.Config)
+    structure has a new `extensions` field.
+
+## [`rocket_dyn_templates`](https://api.rocket.rs/v0.5/rocket_dyn_templates/) `0.2.0`
+
+  * Support for `minijinja` `2.0` templates was introduced.
+
+    Templates with an extension of `.j2` are recognized and rendered with
+    Minijinja.
+
+  * **(breaking)** `handlebars` was updated to `5.1`.
+
+## [`rocket_ws`](https://api.rocket.rs/v0.5/rocket_ws/) `0.1.1`
+
+  * Introduced [`WebSocket::accept_key()`] method.
+
+  * `tungstenite` was updated to `0.21`.
+
+## General Changes
+
+  * The `rust-version` for all crates was updated to `1.64`.
+
+    This reflects the correct MSRV required to build `rocket` `0.5.0`.
+
+  * License files are now present in all published crates.
+
+[52de9a]: https://github.com/rwf2/Rocket/commit/52de9a
+[#2668]: https://github.com/rwf2/Rocket/pull/2668
+[deploying section]: https://rocket.rs/guide/v0.5/deploying/
+[`WebSocket::accept_key()`]: https://api.rocket.rs/v0.5/rocket_ws/struct.WebSocket#method.accept_key
+
 # Version 0.5.0 (Nov 17, 2023)
 
 ## Major Features and Improvements

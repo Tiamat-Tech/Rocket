@@ -38,9 +38,9 @@ pub enum Sig {
     Usr2
 }
 
-impl fmt::Display for Sig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+impl Sig {
+    pub fn as_str(&self) -> &'static str {
+        match self {
             Sig::Alrm => "SIGALRM",
             Sig::Chld => "SIGCHLD",
             Sig::Hup => "SIGHUP",
@@ -51,8 +51,12 @@ impl fmt::Display for Sig {
             Sig::Term => "SIGTERM",
             Sig::Usr1 => "SIGUSR1",
             Sig::Usr2 => "SIGUSR2",
-        };
+        }
+    }
+}
 
-        s.fmt(f)
+impl fmt::Display for Sig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }

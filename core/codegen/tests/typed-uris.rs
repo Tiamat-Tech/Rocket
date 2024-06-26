@@ -709,3 +709,19 @@ fn test_vec_in_query() {
         uri!(h(v = &[1, 2, 3][..])) => "/?v=%01%02%03",
     }
 }
+
+#[test]
+fn test_either() {
+    use rocket::either::{Either, Left, Right};
+
+    #[get("/<_foo>")]
+    fn f(_foo: Either<usize, &str>) { }
+
+    assert_uri_eq! {
+        uri!(f(Left::<usize, &str>(123))) => "/123",
+        uri!(f(_foo = Left::<usize, &str>(710))) => "/710",
+
+        uri!(f(Right::<usize, &str>("hello world"))) => "/hello%20world",
+        uri!(f(_foo = Right::<usize, &str>("bye?"))) => "/bye%3F",
+    }
+}

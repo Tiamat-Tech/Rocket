@@ -2,8 +2,6 @@ use crate::request::Request;
 use crate::response::{self, Responder};
 use crate::http::Status;
 
-use yansi::Paint;
-
 /// Debug prints the internal value before forwarding to the 500 error catcher.
 ///
 /// This value exists primarily to allow handler return types that would not
@@ -78,8 +76,8 @@ impl<E> From<E> for Debug<E> {
 
 impl<'r, E: std::fmt::Debug> Responder<'r, 'static> for Debug<E> {
     fn respond_to(self, _: &'r Request<'_>) -> response::Result<'static> {
-        warn_!("Debug: {:?}", self.0.primary());
-        warn_!("Debug always responds with {}.", Status::InternalServerError.primary());
+        let type_name = std::any::type_name::<E>();
+        info!(type_name, value = ?self.0, "debug response (500)");
         Err(Status::InternalServerError)
     }
 }
@@ -87,7 +85,7 @@ impl<'r, E: std::fmt::Debug> Responder<'r, 'static> for Debug<E> {
 /// Prints a warning with the error and forwards to the `500` error catcher.
 impl<'r> Responder<'r, 'static> for std::io::Error {
     fn respond_to(self, _: &'r Request<'_>) -> response::Result<'static> {
-        warn_!("I/O Error: {:?}", self.primary());
+        warn!("i/o error response: {self}");
         Err(Status::InternalServerError)
     }
 }

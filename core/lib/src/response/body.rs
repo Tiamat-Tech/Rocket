@@ -352,7 +352,7 @@ impl<'r> Body<'r> {
         let n = match self.read_to_end(&mut vec).await {
             Ok(n) => n,
             Err(e) => {
-                error_!("Error reading body: {:?}", e);
+                error!("i/o error reading body: {:?}", e);
                 return Err(e);
             }
         };
@@ -389,7 +389,7 @@ impl<'r> Body<'r> {
     /// ```
     pub async fn to_string(&mut self) -> io::Result<String> {
         String::from_utf8(self.to_bytes().await?).map_err(|e| {
-            error_!("Body is invalid UTF-8: {}", e);
+            error!("invalid body UTF-8: {}", e);
             io::Error::new(io::ErrorKind::InvalidData, e)
         })
     }

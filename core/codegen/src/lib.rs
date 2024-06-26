@@ -1328,7 +1328,7 @@ pub fn catchers(input: TokenStream) -> TokenStream {
 /// assert_eq!(bob2.to_string(), "/person/Bob%20Smith");
 ///
 /// #[get("/person/<age>")]
-/// fn ok(age: Result<u8, &str>) { }
+/// fn ok(age: Result<u8, std::num::ParseIntError>) { }
 ///
 /// let kid1 = uri!(ok(age = 10));
 /// let kid2 = uri!(ok(12));

@@ -1,11 +1,10 @@
-use std::fmt;
+use std::{io, fmt};
 use std::ops::RangeFrom;
 use std::sync::{Arc, atomic::Ordering};
 use std::borrow::Cow;
 use std::future::Future;
 use std::net::IpAddr;
 
-use yansi::Paint;
 use state::{TypeMap, InitCell};
 use futures::future::BoxFuture;
 use ref_swap::OptionRefSwap;
@@ -18,7 +17,7 @@ use crate::data::Limits;
 use crate::http::ProxyProto;
 use crate::http::{Method, Header, HeaderMap, ContentType, Accept, MediaType, CookieJar, Cookie};
 use crate::http::uri::{fmt::Path, Origin, Segments, Host, Authority};
-use crate::listener::{Certificates, Endpoint, Connection};
+use crate::listener::{Certificates, Endpoint};
 
 /// The type of an incoming web request.
 ///
@@ -44,11 +43,11 @@ pub(crate) struct ConnectionMeta {
     pub peer_certs: Option<Arc<Certificates<'static>>>,
 }
 
-impl<C: Connection> From<&C> for ConnectionMeta {
-    fn from(conn: &C) -> Self {
+impl ConnectionMeta {
+    pub fn new(endpoint: io::Result<Endpoint>, certs: Option<Certificates<'_>>) -> Self {
         ConnectionMeta {
-            peer_endpoint: conn.endpoint().ok(),
-            peer_certs: conn.certificates().map(|c| c.into_owned()).map(Arc::new),
+            peer_endpoint: endpoint.ok(),
+            peer_certs: certs.map(|c| c.into_owned()).map(Arc::new),
         }
     }
 }
@@ -381,7 +380,7 @@ impl<'r> Request<'r> {
             .get_one(ip_header)
             .and_then(|ip| {
                 ip.parse()
-                    .map_err(|_| warn_!("'{}' header is malformed: {}", ip_header, ip))
+                    .map_err(|_| warn!(value = ip, "'{ip_header}' header is malformed"))
                     .ok()
             })
     }
@@ -656,10 +655,20 @@ impl<'r> Request<'r> {
 
     /// Returns the media type "format" of the request.
     ///
-    /// The "format" of a request is either the Content-Type, if the request
-    /// methods indicates support for a payload, or the preferred media type in
-    /// the Accept header otherwise. If the method indicates no payload and no
-    /// Accept header is specified, a media type of `Any` is returned.
+    /// The returned `MediaType` is derived from either the `Content-Type` or
+    /// the `Accept` header of the request, based on whether the request's
+    /// method allows a body (see [`Method::allows_request_body()`]). The table
+    /// below summarized this:
+    ///
+    /// | Method Allows Body | Returned Format                 |
+    /// |--------------------|---------------------------------|
+    /// | Always             | `Option<ContentType>`           |
+    /// | Maybe or Never     | `Some(Preferred Accept or Any)` |
+    ///
+    /// In short, if the request's method indicates support for a payload, the
+    /// request's `Content-Type` header value, if any, is returned. Otherwise
+    /// the [preferred](Accept::preferred()) `Accept` header value is returned,
+    /// or if none is present, [`Accept::Any`].
     ///
     /// The media type returned from this method is used to match against the
     /// `format` route attribute.
@@ -691,7 +700,7 @@ impl<'r> Request<'r> {
     /// ```
     pub fn format(&self) -> Option<&MediaType> {
         static ANY: MediaType = MediaType::Any;
-        if self.method().supports_payload() {
+        if self.method().allows_request_body().unwrap_or(false) {
             self.content_type().map(|ct| ct.media_type())
         } else {
             // TODO: Should we be using `accept_first` or `preferred`? Or
@@ -1031,16 +1040,16 @@ impl<'r> Request<'r> {
         self.routed_segments(0..).get(n)
     }
 
-    /// Get the segments beginning at the `n`th, 0-indexed, after the mount
+    /// Get the segments beginning at the `range`, 0-indexed, after the mount
     /// point for the currently matched route, if they exist. Used by codegen.
     #[inline]
-    pub fn routed_segments(&self, n: RangeFrom<usize>) -> Segments<'_, Path> {
+    pub fn routed_segments(&self, range: RangeFrom<usize>) -> Segments<'_, Path> {
         let mount_segments = self.route()
             .map(|r| r.uri.metadata.base_len)
             .unwrap_or(0);
 
-        trace!("requesting {}.. ({}..) from {}", n.start, mount_segments, self);
-        self.uri().path().segments().skip(mount_segments + n.start)
+        trace!(name: "segments", mount_segments, range.start);
+        self.uri().path().segments().skip(mount_segments + range.start)
     }
 
     // Retrieves the pre-parsed query items. Used by matching and codegen.
@@ -1102,10 +1111,14 @@ impl<'r> Request<'r> {
                 // a security issue with Hyper, there isn't much we can do.
                 #[cfg(debug_assertions)]
                 if Origin::parse(uri.as_str()).is_err() {
-                    warn!("Hyper/Rocket URI validity discord: {:?}", uri.as_str());
-                    info_!("Hyper believes the URI is valid while Rocket disagrees.");
-                    info_!("This is likely a Hyper bug with potential security implications.");
-                    warn_!("Please report this warning to Rocket's GitHub issue tracker.");
+                    warn!(
+                        name: "uri_discord",
+                        %uri,
+                        "Hyper/Rocket URI validity discord: {uri}\n\
+                        Hyper believes the URI is valid while Rocket disagrees.\n\
+                        This is likely a Hyper bug with potential security implications.\n\
+                        Please report this warning to Rocket's GitHub issue tracker."
+                    )
                 }
 
                 Origin::new(uri.path(), uri.query().map(Cow::Borrowed))
@@ -1145,15 +1158,14 @@ impl<'r> Request<'r> {
         }
 
         // Set the rest of the headers. This is rather unfortunate and slow.
-        for (name, value) in hyper.headers.iter() {
+        for (header, value) in hyper.headers.iter() {
             // FIXME: This is rather unfortunate. Header values needn't be UTF8.
             let Ok(value) = std::str::from_utf8(value.as_bytes()) else {
-                warn!("Header '{}' contains invalid UTF-8", name);
-                warn_!("Rocket only supports UTF-8 header values. Dropping header.");
+                warn!(%header, "dropping header with invalid UTF-8");
                 continue;
             };
 
-            request.add_header(Header::new(name.as_str(), value));
+            request.add_header(Header::new(header.as_str(), value));
         }
 
         match request.errors.is_empty() {
@@ -1187,21 +1199,5 @@ impl fmt::Debug for Request<'_> {
             .field("remote", &self.remote())
             .field("cookies", &self.cookies())
             .finish()
-    }
-}
-
-impl fmt::Display for Request<'_> {
-    /// Pretty prints a Request. Primarily used by Rocket's logging.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.method().green(), self.uri.blue())?;
-
-        // Print the requests media type when the route specifies a format.
-        if let Some(mime) = self.format() {
-            if !mime.is_any() {
-                write!(f, " {}/{}", mime.top().yellow().linger(), mime.sub().resetting())?;
-            }
-        }
-
-        Ok(())
     }
 }

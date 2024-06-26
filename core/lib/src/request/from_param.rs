@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::path::PathBuf;
 
 use crate::error::Empty;
+use crate::either::Either;
 use crate::http::uri::{Segments, error::PathError, fmt::Path};
 
 /// Trait to convert a dynamic path segment string to a concrete value.
@@ -40,28 +41,55 @@ use crate::http::uri::{Segments, error::PathError, fmt::Path};
 ///
 /// Sometimes, a forward is not desired, and instead, we simply want to know
 /// that the dynamic path segment could not be parsed into some desired type
-/// `T`. In these cases, types of `Option<T>` or `Result<T, T::Error>` can be
-/// used. These types implement `FromParam` themselves. Their implementations
-/// always return successfully, so they never forward. They can be used to
-/// determine if the `FromParam` call failed and to retrieve the error value
-/// from the failed `from_param` call.
+/// `T`. In these cases, types of `Option<T>`, `Result<T, T::Error>`, or
+/// `Either<A, B>` can be used, which implement `FromParam` themselves.
 ///
-/// For instance, imagine you've asked for an `<id>` as a `usize`. To determine
-/// when the `<id>` was not a valid `usize` and retrieve the string that failed
-/// to parse, you can use a `Result<usize, &str>` type for the `<id>` parameter
-/// as follows:
+///   * **`Option<T>`** _where_ **`T: FromParam`**
+///
+///     Always returns successfully.
+///
+///     If the conversion to `T` fails, `None` is returned. If the conversion
+///     succeeds, `Some(value)` is returned.
+///
+///   * **`Result<T, T::Error>`** _where_ **`T: FromParam`**
+///
+///     Always returns successfully.
+///
+///     If the conversion to `T` fails, `Err(error)` is returned. If the
+///     conversion succeeds, `Ok(value)` is returned.
+///
+///   * **`Either<A, B>`** _where_ **`A: FromParam`** _and_ **`B: FromParam`**
+///
+///      Fails only when both `A::from_param` and `B::from_param` fail. If one
+///      of the two succeeds, the successful value is returned in
+///      `Either::Left(A)` or `Either::Right(B)` variant, respectively. If both
+///      fail, the error values from both calls are returned in a tuple in the
+///      `Err` variant.
+///
+/// `Either<A, B>` is particularly useful with a `B` type of `&str`, allowing
+/// you to retrieve the invalid path segment. Because `&str`'s implementation of
+/// `FromParam` always succeeds, the `Right` variant of the `Either` will always
+/// contain the path segment in case of failure.
+///
+/// For instance, consider the following route and handler:
 ///
 /// ```rust
 /// # #[macro_use] extern crate rocket;
+/// use rocket::either::{Either, Left, Right};
+///
 /// #[get("/<id>")]
-/// fn hello(id: Result<usize, &str>) -> String {
+/// fn hello(id: Either<usize, &str>) -> String {
 ///     match id {
-///         Ok(id_num) => format!("usize: {}", id_num),
-///         Err(string) => format!("Not a usize: {}", string)
+///         Left(id_num) => format!("usize: {}", id_num),
+///         Right(string) => format!("Not a usize: {}", string)
 ///     }
 /// }
 /// # fn main() {  }
 /// ```
+///
+/// In the above example, if the dynamic path segment cannot be parsed into a
+/// `usize`, the raw path segment is returned in the `Right` variant of the
+/// `Either<usize, &str>` value.
 ///
 /// # Provided Implementations
 ///
@@ -204,9 +232,8 @@ impl<'a> FromParam<'a> for String {
     #[inline(always)]
     fn from_param(param: &'a str) -> Result<String, Self::Error> {
         #[cfg(debug_assertions)] {
-            let loc = std::panic::Location::caller();
-            warn_!("Note: Using `String` as a parameter type is inefficient. Use `&str` instead.");
-            info_!("`String` is used a parameter guard in {}:{}.", loc.file(), loc.line());
+            let location = std::panic::Location::caller();
+            warn!(%location, "`String` as a parameter is inefficient. Use `&str` instead.");
         }
 
         if param.is_empty() {
@@ -220,11 +247,11 @@ impl<'a> FromParam<'a> for String {
 macro_rules! impl_with_fromstr {
     ($($T:ty),+) => ($(
         impl<'a> FromParam<'a> for $T {
-            type Error = &'a str;
+            type Error = <$T as FromStr>::Err;
 
             #[inline(always)]
             fn from_param(param: &'a str) -> Result<Self, Self::Error> {
-                <$T as FromStr>::from_str(param).map_err(|_| param)
+                <$T as FromStr>::from_str(param)
             }
         }
     )+)
@@ -359,6 +386,26 @@ impl<'r, T: FromSegments<'r>> FromSegments<'r> for Option<T> {
         match T::from_segments(segments) {
             Ok(val) => Ok(Some(val)),
             Err(_) => Ok(None)
+        }
+    }
+}
+
+/// Implements `FromParam` for `Either<A, B>`, where `A` and `B` both implement
+/// `FromParam`. If `A::from_param` returns `Ok(a)`, `Either::Left(a)` is
+/// returned. If `B::from_param` returns `Ok(b)`, `Either::Right(b)` is
+/// returned. If both `A::from_param` and `B::from_param` return `Err(a)` and
+/// `Err(b)`, respectively, then `Err((a, b))` is returned.
+impl<'v, A: FromParam<'v>, B: FromParam<'v>> FromParam<'v> for Either<A, B> {
+    type Error = (A::Error, B::Error);
+
+    #[inline(always)]
+    fn from_param(param: &'v str) -> Result<Self, Self::Error> {
+        match A::from_param(param) {
+            Ok(a) => Ok(Either::Left(a)),
+            Err(a) => match B::from_param(param) {
+                Ok(b) => Ok(Either::Right(b)),
+                Err(b) => Err((a, b)),
+            }
         }
     }
 }

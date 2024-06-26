@@ -554,17 +554,16 @@ impl<'r> FromData<'r> for Capped<TempFile<'_>> {
     type Error = io::Error;
 
     async fn from_data(req: &'r Request<'_>, data: Data<'r>) -> data::Outcome<'r, Self> {
-        use yansi::Paint;
-
         let has_form = |ty: &ContentType| ty.is_form_data() || ty.is_form();
         if req.content_type().map_or(false, has_form) {
-            let (tf, form) = ("TempFile<'_>".primary(), "Form<TempFile<'_>>".primary());
-            warn_!("Request contains a form that will not be processed.");
-            info_!("Bare `{}` data guard writes raw, unprocessed streams to disk.", tf);
-            info_!("Did you mean to use `{}` instead?", form);
+            warn!(request.content_type = req.content_type().map(display),
+                "Request contains a form that is not being processed.\n\
+                Bare `TempFile` data guard writes raw, unprocessed streams to disk\n\
+                Perhaps you meant to use `Form<TempFile<'_>>` instead?");
         }
 
-        TempFile::from(req, data, None, req.content_type().cloned()).await
+        TempFile::from(req, data, None, req.content_type().cloned())
+            .await
             .or_error(Status::BadRequest)
     }
 }

@@ -12,12 +12,11 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.75"
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
-
-[lints.clippy]
-manual_range_contains = "allow"
-large_enum_variant = "allow"
 
 [dependencies]
 indexmap = "2"

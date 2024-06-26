@@ -13,14 +13,17 @@ rust-version = "1.75"
 [package.metadata.docs.rs]
 all-features = true
 
+[lints]
+workspace = true
+
 [features]
 # deadpool features
 deadpool_postgres = ["deadpool-postgres", "deadpool"]
 deadpool_redis = ["deadpool-redis", "deadpool"]
 # sqlx features
-sqlx_mysql = ["sqlx", "sqlx/mysql"]
-sqlx_postgres = ["sqlx", "sqlx/postgres"]
-sqlx_sqlite = ["sqlx", "sqlx/sqlite"]
+sqlx_mysql = ["sqlx", "sqlx/mysql", "log"]
+sqlx_postgres = ["sqlx", "sqlx/postgres", "log"]
+sqlx_sqlite = ["sqlx", "sqlx/sqlite", "log"]
 sqlx_macros = ["sqlx/macros"]
 # diesel features
 diesel_postgres = ["diesel-async/postgres", "diesel-async/deadpool", "diesel", "deadpool_09"]
@@ -38,25 +41,25 @@ version = "0.1.0"
 
 [dependencies.deadpool_09]
 package = "deadpool"
-version = "0.9"
+version = "0.9.5"
 default-features = false
 features = ["rt_tokio_1", "managed"]
 optional = true
 
 [dependencies.deadpool-postgres]
-version = "0.12"
+version = "0.13.2"
 default-features = false
 features = ["rt_tokio_1"]
 optional = true
 
 [dependencies.deadpool]
-version = "0.10"
+version = "0.12.1"
 default-features = false
 features = ["rt_tokio_1", "managed"]
 optional = true
 
 [dependencies.deadpool-redis]
-version = "0.14"
+version = "0.15"
 default-features = false
 features = ["rt_tokio_1"]
 optional = true
@@ -81,6 +84,11 @@ optional = true
 version = "0.7"
 default-features = false
 features = ["runtime-tokio-rustls"]
+optional = true
+
+[dependencies.log]
+version = "0.4"
+default-features = false
 optional = true
 
 [dev-dependencies.rocket]

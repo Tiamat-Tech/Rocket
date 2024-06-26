@@ -103,12 +103,12 @@
 //! Drivers have a varying degree of support for graceful shutdown, affected by
 //! the `Type::init()` fairing on Rocket shutdown.
 //!
-//! ## `deadpool` (v0.9)
+//! ## `deadpool` (v0.13)
 //!
 //! | Database | Feature                     | [`Pool`] Type               | [`Connection`] Deref                 |
 //! |----------|-----------------------------|-----------------------------|--------------------------------------|
-//! | Postgres | `deadpool_postgres` (v0.12) | [`deadpool_postgres::Pool`] | [`deadpool_postgres::ClientWrapper`] |
-//! | Redis    | `deadpool_redis` (v0.14)    | [`deadpool_redis::Pool`]    | [`deadpool_redis::Connection`]       |
+//! | Postgres | `deadpool_postgres` (v0.13) | [`deadpool_postgres::Pool`] | [`deadpool_postgres::ClientWrapper`] |
+//! | Redis    | `deadpool_redis` (v0.15)    | [`deadpool_redis::Pool`]    | [`deadpool_redis::Connection`]       |
 //!
 //! On shutdown, new connections are denied. Shutdown _does not_ wait for
 //! connections to be returned.
@@ -180,11 +180,14 @@
 //! [default.databases.db_name]
 //! url = "db.sqlite"
 //!
-//! # only `url` is required. the rest have defaults and are thus optional
+//! # Only `url` is required. These have sane defaults and are optional.
 //! min_connections = 64
 //! max_connections = 1024
 //! connect_timeout = 5
 //! idle_timeout = 120
+//!
+//! # This option is only supported by the `sqlx_sqlite` driver.
+//! extensions = ["memvfs", "rot13"]
 //! ```
 //!
 //! Or via environment variables:

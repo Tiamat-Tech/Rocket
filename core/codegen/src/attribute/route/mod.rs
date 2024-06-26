@@ -41,7 +41,7 @@ fn query_decls(route: &Route) -> Option<TokenStream> {
     }
 
     define_spanned_export!(Span::call_site() =>
-        __req, __data, _log, _form, Outcome, _Ok, _Err, _Some, _None, Status
+        __req, __data, _form, Outcome, _Ok, _Err, _Some, _None, Status
     );
 
     // Record all of the static parameters for later filtering.
@@ -105,8 +105,15 @@ fn query_decls(route: &Route) -> Option<TokenStream> {
             )*
 
             if !__e.is_empty() {
-                #_log::warn_!("Query string failed to match route declaration.");
-                for _err in __e { #_log::warn_!("{}", _err); }
+                ::rocket::trace::span_info!(
+                    "codegen",
+                    "query string failed to match route declaration" =>
+                        { for _err in __e { ::rocket::trace::info!(
+                            target: concat!("rocket::codegen::route::", module_path!()),
+                            "{_err}"
+                        ); } }
+                );
+
                 return #Outcome::Forward((#__data, #Status::UnprocessableEntity));
             }
 
@@ -118,18 +125,35 @@ fn query_decls(route: &Route) -> Option<TokenStream> {
 fn request_guard_decl(guard: &Guard) -> TokenStream {
     let (ident, ty) = (guard.fn_ident.rocketized(), &guard.ty);
     define_spanned_export!(ty.span() =>
-        __req, __data, _request, _log, FromRequest, Outcome
+        __req, __data, _request, display_hack, FromRequest, Outcome
     );
 
     quote_spanned! { ty.span() =>
         let #ident: #ty = match <#ty as #FromRequest>::from_request(#__req).await {
             #Outcome::Success(__v) => __v,
             #Outcome::Forward(__e) => {
-                #_log::warn_!("Request guard `{}` is forwarding.", stringify!(#ty));
+                ::rocket::trace::info!(
+                    name: "forward",
+                    target: concat!("rocket::codegen::route::", module_path!()),
+                    parameter = stringify!(#ident),
+                    type_name = stringify!(#ty),
+                    status = __e.code,
+                    "request guard forwarding"
+                );
+
                 return #Outcome::Forward((#__data, __e));
             },
+            #[allow(unreachable_code)]
             #Outcome::Error((__c, __e)) => {
-                #_log::warn_!("Request guard `{}` failed: {:?}.", stringify!(#ty), __e);
+                ::rocket::trace::info!(
+                    name: "failure",
+                    target: concat!("rocket::codegen::route::", module_path!()),
+                    parameter = stringify!(#ident),
+                    type_name = stringify!(#ty),
+                    reason = %#display_hack!(__e),
+                    "request guard failed"
+                );
+
                 return #Outcome::Error(__c);
             }
         };
@@ -139,14 +163,20 @@ fn request_guard_decl(guard: &Guard) -> TokenStream {
 fn param_guard_decl(guard: &Guard) -> TokenStream {
     let (i, name, ty) = (guard.index, &guard.name, &guard.ty);
     define_spanned_export!(ty.span() =>
-        __req, __data, _log, _None, _Some, _Ok, _Err,
-        Outcome, FromSegments, FromParam, Status
+        __req, __data, _None, _Some, _Ok, _Err,
+        Outcome, FromSegments, FromParam, Status, display_hack
     );
 
     // Returned when a dynamic parameter fails to parse.
     let parse_error = quote!({
-        #_log::warn_!("Parameter guard `{}: {}` is forwarding: {:?}.",
-            #name, stringify!(#ty), __error);
+        ::rocket::trace::info!(
+            name: "forward",
+            target: concat!("rocket::codegen::route::", module_path!()),
+            parameter = #name,
+            type_name = stringify!(#ty),
+            reason = %#display_hack!(__error),
+            "path guard forwarding"
+        );
 
         #Outcome::Forward((#__data, #Status::UnprocessableEntity))
     });
@@ -158,12 +188,18 @@ fn param_guard_decl(guard: &Guard) -> TokenStream {
             match #__req.routed_segment(#i) {
                 #_Some(__s) => match <#ty as #FromParam>::from_param(__s) {
                     #_Ok(__v) => __v,
+                    #[allow(unreachable_code)]
                     #_Err(__error) => return #parse_error,
                 },
                 #_None => {
-                    #_log::error_!("Internal invariant broken: dyn param {} not found.", #i);
-                    #_log::error_!("Please report this to the Rocket issue tracker.");
-                    #_log::error_!("https://github.com/rwf2/Rocket/issues");
+                    ::rocket::trace::error!(
+                        target: concat!("rocket::codegen::route::", module_path!()),
+                        "Internal invariant broken: dyn param {} not found.\n\
+                        Please report this to the Rocket issue tracker.\n\
+                        https://github.com/rwf2/Rocket/issues",
+                        #i
+                    );
+
                     return #Outcome::Forward((#__data, #Status::InternalServerError));
                 }
             }
@@ -171,6 +207,7 @@ fn param_guard_decl(guard: &Guard) -> TokenStream {
         true => quote_spanned! { ty.span() =>
             match <#ty as #FromSegments>::from_segments(#__req.routed_segments(#i..)) {
                 #_Ok(__v) => __v,
+                #[allow(unreachable_code)]
                 #_Err(__error) => return #parse_error,
             }
         },
@@ -182,17 +219,34 @@ fn param_guard_decl(guard: &Guard) -> TokenStream {
 
 fn data_guard_decl(guard: &Guard) -> TokenStream {
     let (ident, ty) = (guard.fn_ident.rocketized(), &guard.ty);
-    define_spanned_export!(ty.span() => _log, __req, __data, FromData, Outcome);
+    define_spanned_export!(ty.span() => __req, __data, display_hack, FromData, Outcome);
 
     quote_spanned! { ty.span() =>
         let #ident: #ty = match <#ty as #FromData>::from_data(#__req, #__data).await {
             #Outcome::Success(__d) => __d,
             #Outcome::Forward((__d, __e)) => {
-                #_log::warn_!("Data guard `{}` is forwarding.", stringify!(#ty));
+                ::rocket::trace::info!(
+                    name: "forward",
+                    target: concat!("rocket::codegen::route::", module_path!()),
+                    parameter = stringify!(#ident),
+                    type_name = stringify!(#ty),
+                    status = __e.code,
+                    "data guard forwarding"
+                );
+
                 return #Outcome::Forward((__d, __e));
             }
+            #[allow(unreachable_code)]
             #Outcome::Error((__c, __e)) => {
-                #_log::warn_!("Data guard `{}` failed: {:?}.", stringify!(#ty), __e);
+                ::rocket::trace::info!(
+                    name: "failure",
+                    target: concat!("rocket::codegen::route::", module_path!()),
+                    parameter = stringify!(#ident),
+                    type_name = stringify!(#ty),
+                    reason = %#display_hack!(__e),
+                    "data guard failed"
+                );
+
                 return #Outcome::Error(__c);
             }
         };
@@ -209,26 +263,34 @@ fn internal_uri_macro_decl(route: &Route) -> TokenStream {
     // Generate a unique macro name based on the route's metadata.
     let macro_name = route.handler.sig.ident.prepend(crate::URI_MACRO_PREFIX);
     let inner_macro_name = macro_name.uniqueify_with(|mut hasher| {
-        route.handler.sig.ident.hash(&mut hasher);
+        route.attr.method.0.hash(&mut hasher);
         route.attr.uri.path().hash(&mut hasher);
-        route.attr.uri.query().hash(&mut hasher)
+        route.attr.uri.query().hash(&mut hasher);
+        route.attr.data.as_ref().map(|d| d.value.hash(&mut hasher));
+        route.attr.format.as_ref().map(|f| f.0.hash(&mut hasher));
     });
 
     let route_uri = route.attr.uri.to_string();
 
     quote_spanned! { Span::call_site() =>
         #[doc(hidden)]
-        #[macro_export]
-        /// Rocket generated URI macro.
-        macro_rules! #inner_macro_name {
-            ($($token:tt)*) => {{
-                rocket::rocket_internal_uri!(#route_uri, (#(#uri_args),*), $($token)*)
-            }};
+        #[allow(nonstandard_style, unused)]
+        pub mod #inner_macro_name {
+            #[doc(hidden)]
+            #[macro_export]
+            /// Rocket generated URI macro.
+            macro_rules! #inner_macro_name {
+                ($($token:tt)*) => {{
+                    ::rocket::rocket_internal_uri!(#route_uri, (#(#uri_args),*), $($token)*)
+                }};
+            }
+
+            pub use #inner_macro_name as #macro_name;
         }
 
         #[doc(hidden)]
         #[allow(unused)]
-        pub use #inner_macro_name as #macro_name;
+        pub use #inner_macro_name::#macro_name;
     }
 }
 
@@ -372,6 +434,7 @@ fn codegen_route(route: Route) -> Result<TokenStream> {
                     format: #format,
                     rank: #rank,
                     sentinels: #sentinels,
+                    location: (::core::file!(), ::core::line!(), ::core::column!()),
                 }
             }
 

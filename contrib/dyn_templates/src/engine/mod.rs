@@ -156,24 +156,21 @@ impl Engines {
 
     /// Returns iterator over template (name, engine_extension).
     pub(crate) fn templates(&self) -> impl Iterator<Item = (&str, &'static str)> {
-        #[cfg(all(feature = "tera", feature = "handlebars"))] {
-            self.tera.get_template_names()
-                .map(|name| (name, Tera::EXT))
-                .chain(self.handlebars.get_templates().keys()
-                    .map(|name| (name.as_str(), Handlebars::EXT)))
-        }
+        #[cfg(feature = "tera")]
+        let tera = self.tera.get_template_names().map(|name| (name, Tera::EXT));
 
-        #[cfg(all(feature = "tera", not(feature = "handlebars")))] {
-            self.tera.get_template_names().map(|name| (name, Tera::EXT))
-        }
+        #[cfg(feature = "handlebars")]
+        let handlebars = self.handlebars.get_templates().keys()
+                .map(|name| (name.as_str(), Handlebars::EXT));
 
-        #[cfg(all(feature = "handlebars", not(feature = "tera")))] {
-            self.handlebars.get_templates().keys()
-                .map(|name| (name.as_str(), Handlebars::EXT))
-        }
+        #[cfg(feature = "minijinja")]
+        let minijinja = self.minijinja.templates()
+            .map(|(name, _)| (name, Environment::EXT));
 
-        #[cfg(not(any(feature = "tera", feature = "handlebars")))] {
-            None.into_iter()
-        }
+        #[cfg(not(feature = "tera"))] let tera = std::iter::empty();
+        #[cfg(not(feature = "handlebars"))] let handlebars = std::iter::empty();
+        #[cfg(not(feature = "minijinja"))] let minijinja = std::iter::empty();
+
+        tera.chain(handlebars).chain(minijinja)
     }
 }

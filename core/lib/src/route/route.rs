@@ -1,8 +1,6 @@
 use std::fmt;
 use std::borrow::Cow;
 
-use yansi::Paint;
-
 use crate::http::{uri, Method, MediaType};
 use crate::route::{Handler, RouteUri, BoxFuture};
 use crate::sentinel::Sentry;
@@ -178,6 +176,8 @@ pub struct Route {
     pub format: Option<MediaType>,
     /// The discovered sentinels.
     pub(crate) sentinels: Vec<Sentry>,
+    /// The file, line, and column where the route was defined, if known.
+    pub(crate) location: Option<(&'static str, u32, u32)>,
 }
 
 impl Route {
@@ -252,6 +252,7 @@ impl Route {
             format: None,
             sentinels: Vec::new(),
             handler: Box::new(handler),
+            location: None,
             rank, uri, method,
         }
     }
@@ -343,27 +344,6 @@ impl Route {
     }
 }
 
-impl fmt::Display for Route {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(ref n) = self.name {
-            write!(f, "{}{}{} ", "(".cyan(), n.primary(), ")".cyan())?;
-        }
-
-        write!(f, "{} ", self.method.green())?;
-        self.uri.color_fmt(f)?;
-
-        if self.rank > 1 {
-            write!(f, " [{}]", self.rank.primary().bold())?;
-        }
-
-        if let Some(ref format) = self.format {
-            write!(f, " {}", format.yellow())?;
-        }
-
-        Ok(())
-    }
-}
-
 impl fmt::Debug for Route {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Route")
@@ -394,6 +374,8 @@ pub struct StaticInfo {
     /// Route-derived sentinels, if any.
     /// This isn't `&'static [SentryInfo]` because `type_name()` isn't `const`.
     pub sentinels: Vec<Sentry>,
+    /// The file, line, and column where the route was defined.
+    pub location: (&'static str, u32, u32),
 }
 
 #[doc(hidden)]
@@ -409,6 +391,7 @@ impl From<StaticInfo> for Route {
             rank: info.rank.unwrap_or_else(|| uri.default_rank()),
             format: info.format,
             sentinels: info.sentinels.into_iter().collect(),
+            location: Some(info.location),
             uri,
         }
     }

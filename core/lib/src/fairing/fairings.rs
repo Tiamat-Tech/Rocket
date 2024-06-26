@@ -2,9 +2,6 @@ use std::collections::HashSet;
 
 use crate::{Rocket, Request, Response, Data, Build, Orbit};
 use crate::fairing::{Fairing, Info, Kind};
-use crate::log::PaintExt;
-
-use yansi::Paint;
 
 #[derive(Default)]
 pub struct Fairings {
@@ -48,6 +45,12 @@ impl Fairings {
             .chain(self.request.iter())
             .chain(self.response.iter())
             .chain(self.shutdown.iter())
+    }
+
+    pub fn unique_set(&self) -> Vec<&dyn Fairing> {
+        iter!(self, self.active().collect::<HashSet<_>>().into_iter())
+            .map(|v| v.1)
+            .collect()
     }
 
     pub fn add(&mut self, fairing: Box<dyn Fairing>) {
@@ -167,18 +170,6 @@ impl Fairings {
         match self.failures.is_empty() {
             true => Ok(()),
             false => Err(&self.failures)
-        }
-    }
-
-    pub fn pretty_print(&self) {
-        let active_fairings = self.active().collect::<HashSet<_>>();
-        if !active_fairings.is_empty() {
-            launch_meta!("{}{}:", "📡 ".emoji(), "Fairings".magenta());
-
-            for (_, fairing) in iter!(self, active_fairings.into_iter()) {
-                let (name, kind) = (fairing.info().name, fairing.info().kind);
-                launch_meta_!("{} ({})", name.primary().bold(), kind.blue().bold());
-            }
         }
     }
 }

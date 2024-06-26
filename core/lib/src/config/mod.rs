@@ -122,7 +122,7 @@ pub use ident::Ident;
 pub use config::Config;
 pub use cli_colors::CliColors;
 
-pub use crate::log::LogLevel;
+pub use crate::trace::{TraceFormat, Level};
 pub use crate::shutdown::ShutdownConfig;
 
 #[cfg(feature = "tls")]
@@ -137,11 +137,5 @@ mod secret_key;
 #[cfg(unix)]
 pub use crate::shutdown::Sig;
 
-#[cfg(unix)]
-pub use crate::listener::unix::UdsConfig;
-
 #[cfg(feature = "secrets")]
 pub use secret_key::SecretKey;
-
-#[doc(hidden)]
-pub use config::{pretty_print_error, bail_with_config_error};
